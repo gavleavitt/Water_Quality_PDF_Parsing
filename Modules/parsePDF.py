@@ -25,6 +25,7 @@ beachfk = {'Carpinteria State Beach': 1, 'Summerland Beach': 2, 'Hammond\'s': 3,
 col = ['Total Coliform Results (MPN*)', 'Total Coliform State Health Standard (MPN*)',
        "Fecal Coliform Results (MPN*)", 'Fecal Coliform State Health Standard (MPN*)', 'Enterococcus Results (MPN*)',
        'Enterococcus State Health Standard (MPN*)', 'Exceeds FC:TC ratio standard **', 'Beach Status', 'fk']
+resampcol = ['Total Coliform Results (MPN*)',"Fecal Coliform Results (MPN*)", 'Enterococcus Results (MPN*)']
 resampdict = {}
 
 
@@ -48,18 +49,6 @@ def md5hash(text):
     """
     return hashlib.md5(text.encode()).hexdigest()
 
-
-# def handlehash(text, pdfDate, pdfName, pdfLoc, insDate, hashedtext):
-#     if DBQ.checkmd5tab(hashedtext, pdfDate) is False:
-#         print("Already processed this PDF, deleting and exiting!")
-#         deletePDFQuit(pdfLoc)
-#         quit()
-#     elif DBQ.checkmd5tab(hashedtext, pdfDate) == "New":
-#         res = DBQ.insmd5(hashedtext, pdfDate, pdfName, insDate)
-#     else:
-#         pass
-#     return res
-
 def deletePDFQuit(pdfLoc):
     """
     Deletes pdf and ends the script
@@ -69,26 +58,46 @@ def deletePDFQuit(pdfLoc):
     os.remove(pdfLoc)
     quit()
 
+def pdfUpdate():
+    """
 
-def handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime):
+    :return:
+    """
+    pass
+
+def handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime, beachList):
     if pdfstatus == "Exists":
         print("Already processed this pdf, removing pdf and quitting!")
         os.remove(pdfLoc)
         quit()
-    elif pdfstatus == "Update":
-        pass
-    elif pdfstatus == "New":
-        print("New PDF!")
-        # Generate beach dictionary
-        beachDict = genDict(pdfDict['pdfDate'])
-        # Populate beach dictionary with results
-        beachDict = populateDict(pdfDict['tab'], beachDict)
-        # Get the md5 hash for the new pdf
-        hashid = DBQ.insmd5(hashedtext, pdfDict['pdfDate'], pdfName, currentTime)
-        # Insert records into postgres, using the beachDict
-        DBQ.insertWaterQual(beachDict, hashid)
+    if checkresamp(pdfDict['cleanedtext']) == True:
+        print("This PDF contains re-sampled results")
+        beachDict = genReSampleDict(pdfDict['cleanedtext'], hashedtext, pdfDict['pdfDate'])
     else:
-        print("Something wrong happened!")
+        # Generate beach dictionary
+        beachDict = genDict(beachList, pdfDict['pdfDate'])
+        # Populate beach dictionary with results
+        beachDict = populateDict(pdfDict['cleanedtext'], beachDict, "No")
+        # If the new PDF contains updates but not re-sample data
+        if pdfstatus == "Update":
+            print("This is a PDF filling in missing water quality results, with no re-sampling")
+            # Get the beaches with null values that are being updated
+            nullbeaches = DBQ.getNullBeaches(hashedtext, pdfDict['pdfDate'])
+            # Check if the key, beachname, is in the null beach list, if not delete it from the beach results dict
+            # Delete any keys with None records for water quality, even if they were already null, its possible
+            # that a updated PDF will not fill in all beaches
+            for beachkey in list(beachDict.keys()):
+                if (beachkey not in nullbeaches) or (beachDict[beachkey]['Total Coliform Results (MPN*)'] is None):
+                    #del nullbeaches[beachkey]
+                    print(f"Removing {beachDict[beachkey]} key from the beach dictionary")
+                    del beachDict[beachkey]
+    # return beachDict
+    # Get the md5 hash for the new pdf
+    hashid = DBQ.insmd5(hashedtext, pdfDict['pdfDate'], pdfName, currentTime)
+    # Insert records into postgres, using the beachDict
+    DBQ.insertWaterQual(beachDict, hashid)
+    return beachDict
+
 
 def cleanText(textList):
     """
@@ -100,20 +109,24 @@ def cleanText(textList):
     """
     text = []
     for item in textList:
-        if item is None:
-            item = "Null"
         item = convertValue(item)
-        text.append(unicodedata.normalize("NFKD", item).replace("\n", ""))
+        if item is '':
+            item = None
+        elif item is not None:
+            item = (unicodedata.normalize("NFKD", item).replace("\n", "").replace("‐", "-"))
+        # print(f"Item value is {item}")
+        text.append(item)
     return text
 
 
-def genDict(pdfDate):
+def genDict(beachList, pdfDate):
     """
     Generate a nested dictionary with beach names as keys at the upper level, and columns as keys at the
     nested level, values are set to '', except for the pdf date, so they can be filled in later.
     :param pdfDate:
     :return:
     """
+    print(f"Generating dictionary using the beachList:{beachList}")
     beachDict = {}
     for i in beachList:
         beachDict[i] = {}
@@ -121,6 +134,7 @@ def genDict(pdfDate):
             beachDict[i][c] = ''
         beachDict[i]['Date'] = pdfDate
         beachDict[i]['fk'] = beachfk[i]
+        beachDict[i]['resample'] = ''
     return beachDict
 
 
@@ -135,35 +149,58 @@ def convertValue(record):
     else:
         return record
 
-
-def handleReSample(recordlist, count, year, pdfDate):
+def genReSampleDict(tab, hashedtext, pdfDate):
     """
 
-    :param recordlist:
-    :param count:
-    :param year:
+    :param tab:
+    :param hashedtext:
     :param pdfDate:
     :return:
     """
-    # Add blank entries to dict to hold values
-    beachname = recordlist[0].split(" Re")[0]
-    resampdict[beachname] = {}
-    # Add original values to dictionary, before resampling
-    resampdict[beachname][beachname + " initial"] = {}
+    print("Generating beach dictionary with resampled and data fill-ins")
+    resampbeaches = []
+    combinedbeaches = []
+    resampTab = [tab[0]]
+    newRecTab = []
+    # Get list of null beaches
+    nullbeaches = DBQ.getNullBeaches(hashedtext, pdfDate)
+    print(f"Null beaches are {nullbeaches}")
+    # Iterate over all records in the table
+    for row in range(1, len(tab)):
+        # Check each beach name, index 0 in the nested list, to see if it contains "sample", meaning it was resampled
+        if "sample" in tab[row][0]:
+            # print(f"Testing {tab[row][0]}")
+            resamprow = tab[row]
+            resamprow[0] = resamprow[0].split(' Re')[0]
+            # Add to resample beach list
+            resampbeaches.append(resamprow[0])
+            # Add to resample table
+            for item in resamprow[1:]:
+                if " " in item:
+                    resamprow[resamprow.index(item)] = item.split(" ")[0]
+            resampTab.append(resamprow)
+        elif tab[row][0] in nullbeaches and tab[row][1] is not None:
+            # Add beach name to the combined beaches list
+            combinedbeaches.append(tab[0])
+            # Add table row to the new records list
+            newRecTab.append(tab)
+    # Combine the beach names
+    combinedbeaches = resampbeaches + combinedbeaches
+    # print(f"Combined beach names list is {combinedbeaches}")
+    # Use the beach names to generate a template dictionary
+    combinedDict = genDict(combinedbeaches, pdfDate)
+    # print(f"Template re-sample dictionary is {combinedDict}")
+    # print(f"Re-sample table is {resampTab}")
+    # Populate the dictionary with the re-sample data
+    combinedDict = populateDict(resampTab, combinedDict, "Yes")
+    # Populate the dictionary with the new record data
+    combinedDict = populateDict(newRecTab, combinedDict, "No")
+    return combinedDict
 
-    # Get resampled values and build dictionary with them
-    for i in range(0, count):
-        reSampDate = str(recordlist[0].split("sample ")[i + 1].split(" ")[i]) + year
-        reSampID = (beachname + "ReSample " + reSampDate)
-        resampdict[beachname][reSampID] = {}
-        totColi = convertValue(recordlist[1].split(" ")[1])
-        fecColi = convertValue(recordlist[3].split(" ")[1])
-        entero = convertValue(recordlist[5].split(" ")[1])
-        resampdict[beachname][reSampID]['totColi'] = totColi
-        resampdict[beachname][reSampID]['fecColi'] = fecColi
-        resampdict[beachname][reSampID]['entero'] = entero
-        resampdict[beachname][reSampID]['Status'] = recordlist[8]
-        resampdict[beachname][reSampID]['Date'] = reSampDate
+def checkresamp(tab):
+    for sub_list in tab:
+        if "sample" in sub_list[0]:
+            return True
 
 
 def getPDFContents(pdfLoc):
@@ -176,39 +213,54 @@ def getPDFContents(pdfLoc):
     with pdfplumber.open(pdfLoc) as pdf:
         p1 = pdf.pages[0]
         pdfDict['text'] = p1.extract_text()
-        pdfDict['tab'] = p1.extract_tables()[0]
+        raw_tab = p1.extract_tables()[0]
+        pdfDict['tab'] = raw_tab
     pdfDate = cleanText([pdfDict['text'].split("Sample Results for the Week of: ")[1].split(" \nOpen")[0]])[0]
     pdfDict['pdfDate'] = datetime.strptime(pdfDate, '%B %d, %Y')
+    cleanedtext = []
+    for beachdetails in raw_tab:
+        cleanedtext.append(cleanText(beachdetails))
+    pdfDict['cleanedtext'] = cleanedtext
     return pdfDict
 
 
-def populateDict(tab, beachDict):
+def populateDict(tab, beachDict, resample):
     """
     Table comes in as a list of lists.
     :param tab:
     :param pdfDate:
     :return:
     """
-
-    # Skip list 1, which is column names, and use the index of row, nested list, being accessed
+    # Iterate over table skipping row one, which is column names, and use the row index number
+    # print("Inside pop dict func")
     for row in range(1, len(tab)):
-        # Clean the text in the row, a single list of values
-        list = cleanText(tab[row])
-        # print(list)
-        #
-        for i in range(0, (len(tab[row]) - 1)):
-            reSampleCount = list[0].count("sample")
-            if reSampleCount > 0:
-                print(f"Re-sampling Occurred! \nWith {reSampleCount} re-sample(s)!")
-                beachDict[list[0]][col[i]] = list[i + 1]
-            else:
-                beachDict[list[0]][col[i]] = list[i + 1]
+        # print(f"Working on row {tab[row]}")
+        # For every row, iterate over the columns
+    #     for i in range(0, (len(tab[row]) - 1)):
+    #         # print(f"Value being added to beachdict key value {beachDict[list[0]][col[i]]} is {list[i + 1]}")
+    #         beachDict[row[0]][col[i]] = row[i + 1]
+    #         beachDict[row[0]]['resample'] = resample
+    # return beachDic
+        # For every row in the table, iterate over the columns, ignoring the first column(beach name),
+        # since this is the key value. Use the column index to call on the column names list, which acts as a lookup
+        # for the dictionary key value (column name) to be added to the 2nd level dictionary
+        for i in range(1, (len(tab[row]))):
+            # print(f"Filling key {beachDict[tab[row][0]][col[i-1]]} with value {tab[row][i]}")
+            # col[i-1] is needed since the loop is starting at index 1 to avoid iterating over the beach name in the
+            # original list (table), this index is needed to grab the proper column name(key) starting at index 0,
+            # so its decreased by 1 to maintain proper index location for filling in data
+            beachDict[tab[row][0]][col[i-1]] = tab[row][i]
+            beachDict[tab[row][0]]['resample'] = resample
     return beachDict
 
 currentTime = datetime.now()
 pdfName = f"\\Ocean_Water_Quality_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
 pdfLoc = pdfDest = r"G:\My Drive\Projects\Water_Quality\pdf" + pdfName
 downloadURL = "https://countyofsb.org/uploadedFiles/phd/PROGRAMS/EHS/Ocean%20Water%20Weekly%20Results.pdf"
+#Testing variables
+# pdfName = r"Ocean_Water_Quality_Report_20200814.pdf"
+# pdfLoc = r"G:\My Drive\Projects\Water_Quality\pdf\\" + pdfName
+
 
 # Kick off script by downloading PDF
 downloadPDF(downloadURL, pdfDest)
@@ -217,12 +269,9 @@ pdfDict = getPDFContents(pdfLoc)
 # Hash text of pdf document
 hashedtext = md5hash(pdfDict['text'])
 # Check if md5 hash is already in postgres
-pdfstatus = DBQ.checkmd5(hashedtext, pdfDict['pdfDate'], pdfLoc)
+pdfstatus = DBQ.checkmd5(hashedtext, pdfDict['pdfDate'])
 # Handle the results of the md5 hash check and control generation of dictionaries and interactions with postgres
-handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime)
-
-# Get the md5 hash and check if its in postgres, get the hash id for use as fk
-#
-
+#handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime, beachList)
+insDict = handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime, beachList)
 print("All Done!")
 

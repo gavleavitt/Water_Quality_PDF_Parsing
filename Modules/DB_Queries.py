@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker
 from settings import dbcon
 from models import beaches, waterQualityMD5, stateStandards, waterQuality
@@ -8,31 +8,70 @@ engine = create_engine(dbcon)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-def checkmd5tab(hash, pdfDate):
-    query = session.query(waterQualityMD5).filter(waterQualityMD5.md5 == hash).all()
-    if len(query) == 0:
-        return False
-    else:
-        if query.pdfdate == pdfDate:
-            return "Update"
-        else:
-            return "New"
 
-def checkmd5(hash, pdfDate, pdfLoc):
-    query = session.query(waterQualityMD5).filter(waterQualityMD5.md5 == hash).all()
-    # Check if md5 hash is already in postgres, if so delete the downloaded pdf and quit the script
-    if len(query) > 0:
-        # Check if the pdfdate is already in postgres, if so this is an update, either containing resampling or filling
-        # in missing data
-        if query[0].pdfdate == pdfDate:
-            return "Update"
+# def checkmd5tab(hash, pdfDate):
+#     query = session.query(waterQualityMD5).filter(waterQualityMD5.md5 == hash).all()
+#     if len(query) == 0:
+#         return False
+#     else:
+#         if query.pdfdate == pdfDate:
+#             return "Update"
+#         else:
+#             return "New"
+
+
+def checkmd5(hash, pdfDate):
+    # query = session.query(waterQualityMD5).filter(waterQualityMD5.md5 == hash).all()
+    query = session.query(waterQualityMD5).filter(waterQualityMD5.pdfdate == pdfDate).all()
+    # print(f"Checking hash {hash}")
+    hashList = []
+    for i in query:
+        hashList.append(i.md5)
+    if hash in hashList:
         return "Exists"
-    # This is a new record, the md5 is new and the pdfDate isn't in the table
-    else:
+    elif len(hashList) == 0:
         return "New"
+    else:
+        return "Update"
 
 
+    # if len(query) > 0:
+    #     # Check if the pdfdate is already in postgres, if so this is an update, either containing resampling or filling
+    #     # in missing data
+    #     if query[0].pdfdate == pdfDate:
+    #         return "Update"
+    #     return "Exists"
+    # # This is a new record, the md5 is new and the pdfDate isn't in the table
+    # else:
+    #     return "New"
 
+# See: https://stackoverflow.com/questions/16589208/attributeerror-while-querying-neither-instrumentedattribute-object-nor-compa
+def getNullBeaches(hashedtext, pdfDate):
+    query = session.query(waterQuality) \
+        .join(waterQualityMD5) \
+        .join(beaches) \
+        .filter(waterQualityMD5.pdfdate==pdfDate) \
+        .filter(or_(waterQuality.FecColi == None, waterQuality.Entero == None, waterQuality.TotColi == None)) \
+        .all()
+    nullbeaches = []
+    for i in query:
+        nullbeaches.append((i.beach_rel.BeachName).rstrip())
+    return nullbeaches
+
+# def getNullBeaches(hashedtext, pdfDate):
+#     query = session.query(waterQuality) \
+#         .join(waterQualityMD5) \
+#         .join(beaches) \
+#         .filter(waterQuality.FecColi is None) \
+#         .all()
+#     return query
+
+
+# def getNullBeaches(hashedtext, pdfDate):
+#     query = session.query(waterQuality) \
+#         .join(waterQualityMD5) \
+#         .join(beaches)
+#     return query
 
 def insmd5(MD5, pdfDate, pdfName, insDate):
     """
@@ -48,18 +87,22 @@ def insmd5(MD5, pdfDate, pdfName, insDate):
     session.add(newrec)
     session.commit()
     newId = newrec.id
+    session.close()
     print("Data added to MD5 table!")
-    print(f"Water quality md5 hash id is {newrec.id}")
+    print(f"New water quality md5 hash id is {newrec.id}")
     return newId
+
 
 def insertWaterQual(beachDict, md5_fk):
     inslist = []
     for key in beachDict.keys():
-        inslist.append(waterQuality(Beach=beachDict[key]['fk'], TotColi=beachDict[key]['Total Coliform Results (MPN*)'],
-                                    FecColi=beachDict[key]["Fecal Coliform Results (MPN*)"],
-                                    Entero=beachDict[key]['Enterococcus Results (MPN*)'],
-                                    ExceedsRatio=beachDict[key]['Exceeds FC:TC ratio standard **'],
-                                    BeachStatus=beachDict[key]['Beach Status'], md5_id=int(md5_fk)))
+        inslist.append(
+            waterQuality(beach_id=beachDict[key]['fk'], TotColi=beachDict[key]['Total Coliform Results (MPN*)'],
+                         FecColi=beachDict[key]["Fecal Coliform Results (MPN*)"],
+                         Entero=beachDict[key]['Enterococcus Results (MPN*)'],
+                         ExceedsRatio=beachDict[key]['Exceeds FC:TC ratio standard **'],
+                         BeachStatus=beachDict[key]['Beach Status'], resample=beachDict[key]['resample'],
+                         md5_id=int(md5_fk)))
     session.add_all(inslist)
     session.commit()
     session.close()
