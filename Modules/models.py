@@ -19,7 +19,6 @@ class waterQualityMD5(Base):
     md5 = Column(String)
     pdfName = Column(String)
 
-
 class stateStandards(Base):
     __tablename__ = "StateStandards"
 

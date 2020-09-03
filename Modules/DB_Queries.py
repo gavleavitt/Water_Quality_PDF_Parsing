@@ -8,22 +8,21 @@ engine = create_engine(dbcon)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-
-# def checkmd5tab(hash, pdfDate):
-#     query = session.query(waterQualityMD5).filter(waterQualityMD5.md5 == hash).all()
-#     if len(query) == 0:
-#         return False
-#     else:
-#         if query.pdfdate == pdfDate:
-#             return "Update"
-#         else:
-#             return "New"
-
-
 def checkmd5(hash, pdfDate):
-    # query = session.query(waterQualityMD5).filter(waterQualityMD5.md5 == hash).all()
+    """
+    Checks if the downloaded PDF's MD5 hash is already in Postgres and returns result.
+
+    :param hash: String
+        New MD5 hash
+    :param pdfDate: String
+        New PDF Date
+    :return: String
+        "Exists" - Hash is already in Postgres
+        "New" - Hash is not in Postgres and no other hashes exist for the PDF result week
+        "Update" - Hash is not in Postgres but other hashes exist for th PDF result week
+    """
+    # Query Postgres with pdfDate of newly downloaded PDF
     query = session.query(waterQualityMD5).filter(waterQualityMD5.pdfdate == pdfDate).all()
-    # print(f"Checking hash {hash}")
     hashList = []
     for i in query:
         hashList.append(i.md5)
@@ -34,44 +33,27 @@ def checkmd5(hash, pdfDate):
     else:
         return "Update"
 
-
-    # if len(query) > 0:
-    #     # Check if the pdfdate is already in postgres, if so this is an update, either containing resampling or filling
-    #     # in missing data
-    #     if query[0].pdfdate == pdfDate:
-    #         return "Update"
-    #     return "Exists"
-    # # This is a new record, the md5 is new and the pdfDate isn't in the table
-    # else:
-    #     return "New"
-
 # See: https://stackoverflow.com/questions/16589208/attributeerror-while-querying-neither-instrumentedattribute-object-nor-compa
-def getNullBeaches(hashedtext, pdfDate):
+def getNullBeaches(pdfDate):
+    """
+    Returns list of beaches with null values for the given PDF test week. Only called when a update/re-sample PDF is
+    downloaded.
+
+    :param pdfDate: String
+        Date of new weekly PDF results
+    :return: List[Strings,]
+        Names of beaches with null test results
+    """
     query = session.query(waterQuality) \
         .join(waterQualityMD5) \
         .join(beaches) \
-        .filter(waterQualityMD5.pdfdate==pdfDate) \
+        .filter(waterQualityMD5.pdfdate == pdfDate) \
         .filter(or_(waterQuality.FecColi == None, waterQuality.Entero == None, waterQuality.TotColi == None)) \
         .all()
     nullbeaches = []
     for i in query:
-        nullbeaches.append((i.beach_rel.BeachName).rstrip())
+        nullbeaches.append(i.beach_rel.BeachName)
     return nullbeaches
-
-# def getNullBeaches(hashedtext, pdfDate):
-#     query = session.query(waterQuality) \
-#         .join(waterQualityMD5) \
-#         .join(beaches) \
-#         .filter(waterQuality.FecColi is None) \
-#         .all()
-#     return query
-
-
-# def getNullBeaches(hashedtext, pdfDate):
-#     query = session.query(waterQuality) \
-#         .join(waterQualityMD5) \
-#         .join(beaches)
-#     return query
 
 def insmd5(MD5, pdfDate, pdfName, insDate):
     """

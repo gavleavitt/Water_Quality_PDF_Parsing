@@ -6,6 +6,7 @@ import pdfplumber
 import unicodedata
 from datetime import datetime
 import hashlib
+from urllib.parse import quote
 from urllib.request import urlretrieve
 import DB_Queries as DBQ
 import os
@@ -37,6 +38,7 @@ def downloadPDF(url, pdfDest):
     :param pdfDest:
     :return:
     """
+    #url = quote(url)
     urlretrieve(url, pdfDest)
 
 
@@ -66,10 +68,10 @@ def pdfUpdate():
     pass
 
 def handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime, beachList):
-    if pdfstatus == "Exists":
-        print("Already processed this pdf, removing pdf and quitting!")
-        os.remove(pdfLoc)
-        quit()
+    # if pdfstatus == "Exists":
+    #     print("Already processed this pdf, removing pdf and quitting!")
+    #     os.remove(pdfLoc)
+    #     quit()
     if checkresamp(pdfDict['cleanedtext']) == True:
         print("This PDF contains re-sampled results")
         beachDict = genReSampleDict(pdfDict['cleanedtext'], hashedtext, pdfDict['pdfDate'])
@@ -91,7 +93,7 @@ def handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime
                     #del nullbeaches[beachkey]
                     print(f"Removing {beachDict[beachkey]} key from the beach dictionary")
                     del beachDict[beachkey]
-    # return beachDict
+    #return beachDict
     # Get the md5 hash for the new pdf
     hashid = DBQ.insmd5(hashedtext, pdfDict['pdfDate'], pdfName, currentTime)
     # Insert records into postgres, using the beachDict
@@ -109,12 +111,18 @@ def cleanText(textList):
     """
     text = []
     for item in textList:
-        item = convertValue(item)
-        if item is '':
+        print(f"item value is {item}")
+        #item = convertValue(item)
+        if item == '':
             item = None
+        elif item == "<10":
+            item = "0"
         elif item is not None:
-            item = (unicodedata.normalize("NFKD", item).replace("\n", "").replace("‐", "-"))
+            item = (unicodedata.normalize("NFKD", item).replace("\n", "").replace("‐", "-").replace(",", ""))
+            if item == 'Results not available':
+                item = None
         # print(f"Item value is {item}")
+        print(f"cleaned item is {item}")
         text.append(item)
     return text
 
@@ -161,7 +169,7 @@ def genReSampleDict(tab, hashedtext, pdfDate):
     resampbeaches = []
     combinedbeaches = []
     resampTab = [tab[0]]
-    newRecTab = []
+    newRecTab = [tab[0]]
     # Get list of null beaches
     nullbeaches = DBQ.getNullBeaches(hashedtext, pdfDate)
     print(f"Null beaches are {nullbeaches}")
@@ -180,10 +188,13 @@ def genReSampleDict(tab, hashedtext, pdfDate):
                     resamprow[resamprow.index(item)] = item.split(" ")[0]
             resampTab.append(resamprow)
         elif tab[row][0] in nullbeaches and tab[row][1] is not None:
+            # print("This re-sample PDF is also filling in missing data")
             # Add beach name to the combined beaches list
-            combinedbeaches.append(tab[0])
+            # print(f"Adding the beach following beach to the combined beaches list {tab[row][0]} ")
+            # print(f"Records to be appended are {tab[row]}")
+            combinedbeaches.append(tab[row][0])
             # Add table row to the new records list
-            newRecTab.append(tab)
+            newRecTab.append(tab[row])
     # Combine the beach names
     combinedbeaches = resampbeaches + combinedbeaches
     # print(f"Combined beach names list is {combinedbeaches}")
@@ -195,6 +206,7 @@ def genReSampleDict(tab, hashedtext, pdfDate):
     combinedDict = populateDict(resampTab, combinedDict, "Yes")
     # Populate the dictionary with the new record data
     combinedDict = populateDict(newRecTab, combinedDict, "No")
+
     return combinedDict
 
 def checkresamp(tab):
@@ -216,7 +228,7 @@ def getPDFContents(pdfLoc):
         raw_tab = p1.extract_tables()[0]
         pdfDict['tab'] = raw_tab
     pdfDate = cleanText([pdfDict['text'].split("Sample Results for the Week of: ")[1].split(" \nOpen")[0]])[0]
-    pdfDict['pdfDate'] = datetime.strptime(pdfDate, '%B %d, %Y')
+    pdfDict['pdfDate'] = datetime.strptime(pdfDate, '%B %d %Y')
     cleanedtext = []
     for beachdetails in raw_tab:
         cleanedtext.append(cleanText(beachdetails))
@@ -235,12 +247,6 @@ def populateDict(tab, beachDict, resample):
     # print("Inside pop dict func")
     for row in range(1, len(tab)):
         # print(f"Working on row {tab[row]}")
-        # For every row, iterate over the columns
-    #     for i in range(0, (len(tab[row]) - 1)):
-    #         # print(f"Value being added to beachdict key value {beachDict[list[0]][col[i]]} is {list[i + 1]}")
-    #         beachDict[row[0]][col[i]] = row[i + 1]
-    #         beachDict[row[0]]['resample'] = resample
-    # return beachDic
         # For every row in the table, iterate over the columns, ignoring the first column(beach name),
         # since this is the key value. Use the column index to call on the column names list, which acts as a lookup
         # for the dictionary key value (column name) to be added to the 2nd level dictionary
@@ -256,7 +262,7 @@ def populateDict(tab, beachDict, resample):
 currentTime = datetime.now()
 pdfName = f"\\Ocean_Water_Quality_Report_{datetime.now().strftime('%Y%m%d')}.pdf"
 pdfLoc = pdfDest = r"G:\My Drive\Projects\Water_Quality\pdf" + pdfName
-downloadURL = "https://countyofsb.org/uploadedFiles/phd/PROGRAMS/EHS/Ocean%20Water%20Weekly%20Results.pdf"
+downloadURL = "http://countyofsb.org/uploadedFiles/phd/PROGRAMS/EHS/Ocean%20Water%20Weekly%20Results.pdf"
 #Testing variables
 # pdfName = r"Ocean_Water_Quality_Report_20200814.pdf"
 # pdfLoc = r"G:\My Drive\Projects\Water_Quality\pdf\\" + pdfName
