@@ -68,10 +68,10 @@ def pdfUpdate():
     pass
 
 def handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime, beachList):
-    # if pdfstatus == "Exists":
-    #     print("Already processed this pdf, removing pdf and quitting!")
-    #     os.remove(pdfLoc)
-    #     quit()
+    if pdfstatus == "Exists":
+        print("Already processed this pdf, removing pdf and quitting!")
+        os.remove(pdfLoc)
+        quit()
     if checkresamp(pdfDict['cleanedtext']) == True:
         print("This PDF contains re-sampled results")
         beachDict = genReSampleDict(pdfDict['cleanedtext'], hashedtext, pdfDict['pdfDate'])
@@ -111,7 +111,7 @@ def cleanText(textList):
     """
     text = []
     for item in textList:
-        print(f"item value is {item}")
+        # print(f"item value is {item}")
         #item = convertValue(item)
         if item == '':
             item = None
@@ -121,8 +121,7 @@ def cleanText(textList):
             item = (unicodedata.normalize("NFKD", item).replace("\n", "").replace("‐", "-").replace(",", ""))
             if item == 'Results not available':
                 item = None
-        # print(f"Item value is {item}")
-        print(f"cleaned item is {item}")
+        # print(f"cleaned item is {item}")
         text.append(item)
     return text
 
