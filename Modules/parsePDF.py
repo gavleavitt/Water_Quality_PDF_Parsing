@@ -84,14 +84,14 @@ def handlePDFStatus(pdfstatus, pdfLoc, hashedtext, pdfDict, pdfName, currentTime
         if pdfstatus == "Update":
             print("This is a PDF filling in missing water quality results, with no re-sampling")
             # Get the beaches with null values that are being updated
-            nullbeaches = DBQ.getNullBeaches(hashedtext, pdfDict['pdfDate'])
+            nullbeaches = DBQ.getNullBeaches(pdfDict['pdfDate'])
             # Check if the key, beachname, is in the null beach list, if not delete it from the beach results dict
             # Delete any keys with None records for water quality, even if they were already null, its possible
             # that a updated PDF will not fill in all beaches
             for beachkey in list(beachDict.keys()):
                 if (beachkey not in nullbeaches) or (beachDict[beachkey]['Total Coliform Results (MPN*)'] is None):
-                    #del nullbeaches[beachkey]
-                    print(f"Removing {beachDict[beachkey]} key from the beach dictionary")
+                    # del nullbeaches[beachkey]
+                    # print(f"Removing {beachDict[beachkey]} key from the beach dictionary")
                     del beachDict[beachkey]
     #return beachDict
     # Get the md5 hash for the new pdf
@@ -170,7 +170,7 @@ def genReSampleDict(tab, hashedtext, pdfDate):
     resampTab = [tab[0]]
     newRecTab = [tab[0]]
     # Get list of null beaches
-    nullbeaches = DBQ.getNullBeaches(hashedtext, pdfDate)
+    nullbeaches = DBQ.getNullBeaches(pdfDate)
     print(f"Null beaches are {nullbeaches}")
     # Iterate over all records in the table
     for row in range(1, len(tab)):
